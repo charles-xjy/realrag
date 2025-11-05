@@ -18,3 +18,5 @@ vision_base_url = os.getenv("LOCAL_BASE_URL")
 vision_api_key = os.getenv("SILICONFLOW_API_KEY")
 print(vision_base_url)
 print(vision_api_key)
+
+
