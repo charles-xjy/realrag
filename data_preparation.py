@@ -5,7 +5,7 @@ from mineru_parse_pdf import do_parse
 
 def parse_all_pdfs(datas_dir, output_base_dir):
     """
-    步骤1：解析所有PDF，输出内容到 data_base_json_content/
+    步骤1:解析所有PDF,输出内容到 data_base_json_content/
     """
 
     datas_dir = Path(datas_dir)
@@ -58,11 +58,23 @@ def parse_all_pdfs(datas_dir, output_base_dir):
 
 
 def group_by_page(content_list):
+    """
+    将内容列表按照页面索引进行分组
+
+    参数:
+        content_list (list): 包含内容项的列表，每个内容项应该是字典类型，
+                           并可能包含 "page_idx" 键来指定页面索引
+
+    返回:
+        dict: 以页面索引为键，对应页面内容项列表为值的字典
+    """
     from collections import defaultdict
+
     # defaultdict 是一个 “带默认值的字典”，初始化时需要指定 “默认值的类型”（这里是 list）。
     # 当你第一次访问一个不存在的键时，defaultdict 会自动执行 list() 创建一个空列表，作为该键的值。
     pages = defaultdict(list)
     for item in content_list:
+        # 获取当前项的页面索引，缺失则为0
         page_idx = item.get("page_idx", 0)
         pages[page_idx].append(item)
     return dict(pages)
@@ -70,17 +82,23 @@ def group_by_page(content_list):
 
 def item_to_markdown(item, enable_image_caption=True):
     """
-    enable_image_caption: 是否启用多模态视觉分析（图片caption补全），默认True。
+    enable_image_caption: 是否启用多模态视觉分析(图片caption补全),默认True。
     """
-    # 默认API参数：硅基流动Qwen/Qwen2.5-VL-32B-Instruct
+    import os
+    import dotenv
+    import asyncio
+
+    dotenv.load_dotenv()
+    # 默认API参数：硅基流动Qwen/Qwen2.5-VL-7B-Instruct
     vision_provider = "guiji"
-    vision_model = "Pro/Qwen/Qwen2.5-VL-7B-Instruct"
-    vision_api_key = os.getenv("LOCAL_API_KEY")
+    vision_model = "Qwen/Qwen2.5-7B-Instruct"
+    vision_api_key = os.getenv("SILICONFLOW_API_KEY")
     vision_base_url = os.getenv("LOCAL_BASE_URL")
 
     if item["type"] == "text":
         level = item.get("text_level", 0)
         text = item.get("text", "")
+        # mineru提取的文档会存在标题级别，这里处理为markdown格式
         if level == 1:
             return f"# {text}\n\n"
         elif level == 2:
@@ -88,6 +106,8 @@ def item_to_markdown(item, enable_image_caption=True):
         else:
             return f"{text}\n\n"
     elif item["type"] == "image":
+        # 图片的说明文字（或字幕）
+        # 通常是对图片内容的文本描述（比如图片展示的是什么、包含哪些关键信息等）
         captions = item.get("image_caption", [])
         caption = captions[0] if captions else ""
         img_path = item.get("img_path", "")
@@ -96,9 +116,11 @@ def item_to_markdown(item, enable_image_caption=True):
             enable_image_caption
             and not caption
             and img_path
+            # 确保图片存在
             and os.path.exists(img_path)
         ):
             try:
+                # 创建并设置一个新的异步事件循
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
 

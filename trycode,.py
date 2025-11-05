@@ -10,3 +10,11 @@ else:
 for pdf_path in pdf_files:
     # 直接打印 WindowsPath 对象，会自动输出完整路径字符串
     print(pdf_path)
+
+import os
+import dotenv
+dotenv.load_dotenv()
+vision_base_url = os.getenv("LOCAL_BASE_URL")
+vision_api_key = os.getenv("SILICONFLOW_API_KEY")
+print(vision_base_url)
+print(vision_api_key)
