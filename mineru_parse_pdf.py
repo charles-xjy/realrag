@@ -26,6 +26,11 @@ from mineru.backend.vlm.vlm_middle_json_mkcontent import union_make as vlm_union
 from mineru.utils.guess_suffix_or_lang import guess_suffix_by_path
 
 os.environ["MINERU_MODEL_SOURCE"] = "modelscope"
+
+local_md_dir = None
+local_image_dir = None
+
+
 def do_parse(
     output_dir,  # Output directory for storing parsing results
     pdf_file_names: list[str],  # List of PDF file names to be parsed
@@ -47,6 +52,8 @@ def do_parse(
     start_page_id=0,  # Start page ID for parsing, default is 0
     end_page_id=None,  # End page ID for parsing, default is None (parse all pages until the end of the document)
 ):
+    global local_md_dir
+    global local_image_dir
 
     if backend == "pipeline":
         for idx, pdf_bytes in enumerate(pdf_bytes_list):
@@ -76,6 +83,7 @@ def do_parse(
             # 1. 准备输出目录和工具
             model_json = copy.deepcopy(model_list)
             pdf_file_name = pdf_file_names[idx]
+
             local_image_dir, local_md_dir = prepare_env(
                 output_dir, pdf_file_name, parse_method
             )
@@ -134,40 +142,41 @@ def do_parse(
             pdf_bytes = convert_pdf_bytes_to_bytes_by_pypdfium2(
                 pdf_bytes, start_page_id, end_page_id
             )
-            local_image_dir, local_md_dir = prepare_env(
-                output_dir, pdf_file_name, parse_method
-            )
-            image_writer, md_writer = FileBasedDataWriter(
-                local_image_dir
-            ), FileBasedDataWriter(local_md_dir)
-            middle_json, infer_result = vlm_doc_analyze(
-                pdf_bytes,
-                image_writer=image_writer,
-                backend=backend,
-                server_url=server_url,
-            )
 
-            pdf_info = middle_json["pdf_info"]
+            local_image_dir, local_md_dir = prepare_env(output_dir, pdf_file_name)
+            if not os.listdir(local_md_dir):
+                image_writer, md_writer = FileBasedDataWriter(
+                    local_image_dir
+                ), FileBasedDataWriter(local_md_dir)
+                middle_json, infer_result = vlm_doc_analyze(
+                    pdf_bytes,
+                    image_writer=image_writer,
+                    backend=backend,
+                    server_url=server_url,
+                )
 
-            _process_output(
-                pdf_info,
-                pdf_bytes,
-                pdf_file_name,
-                local_md_dir,
-                local_image_dir,
-                md_writer,
-                f_draw_layout_bbox,
-                f_draw_span_bbox,
-                f_dump_orig_pdf,
-                f_dump_md,
-                f_dump_content_list,
-                f_dump_middle_json,
-                f_dump_model_output,
-                f_make_md_mode,
-                middle_json,
-                infer_result,
-                is_pipeline=False,
-            )
+                pdf_info = middle_json["pdf_info"]
+
+                _process_output(
+                    pdf_info,
+                    pdf_bytes,
+                    pdf_file_name,
+                    local_md_dir,
+                    local_image_dir,
+                    md_writer,
+                    f_draw_layout_bbox,
+                    f_draw_span_bbox,
+                    f_dump_orig_pdf,
+                    f_dump_md,
+                    f_dump_content_list,
+                    f_dump_middle_json,
+                    f_dump_model_output,
+                    f_make_md_mode,
+                    middle_json,
+                    infer_result,
+                    is_pipeline=False,
+                )
+        return local_md_dir
 
 
 def _process_output(
@@ -313,10 +322,10 @@ if __name__ == "__main__":
             doc_path_list.append(doc_path)
     print(f"Found {len(doc_path_list)} documents,\nname: {doc_path_list}")
     """如果您由于网络问题无法下载模型，可以设置环境变量MINERU_MODEL_SOURCE为modelscope使用免代理仓库下载模型"""
-    os.environ['MINERU_MODEL_SOURCE'] = "local"
+    os.environ["MINERU_MODEL_SOURCE"] = "local"
 
     """Use pipeline mode if your environment does not support VLM"""
-    parse_doc(doc_path_list, output_dir, backend="vlm-transformers")
+    parse_doc(doc_path_list, output_dir, backend="vlm-vllm-engine")
 
     """To enable VLM mode, change the backend to 'vlm-xxx'"""
     # parse_doc(doc_path_list, output_dir, backend="vlm-transformers")  # more general.

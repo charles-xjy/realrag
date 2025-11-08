@@ -1,0 +1,1 @@
+"![{'image_caption': '现代建筑与自然景观结合，展示了城市规划的创新与自然环境的和谐共存。', 'image_title': '现代建筑与自然景观'}](/home/xjy/mycode/realrag/learnDemo/TaobaoCity_Alibaba_Xixi_Park.jpg)\n"

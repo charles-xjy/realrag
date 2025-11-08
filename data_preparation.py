@@ -1,6 +1,9 @@
+import os
 from pathlib import Path
 
 from mineru_parse_pdf import do_parse
+
+local_md_dir = None
 
 
 def parse_all_pdfs(datas_dir, output_base_dir):
@@ -23,20 +26,23 @@ def parse_all_pdfs(datas_dir, output_base_dir):
         # b 表示 “二进制模式”（Binary），用于处理非文本文件（如 PDF、图片、音频等
         with open(pdf_path, "rb") as f:
             pdf_bytes = f.read()
-        output_dir = output_base_dir / file_name
+        output_dir = output_base_dir
         # 创建 output_dir 对应的文件夹（如果不存在）
         # 如果 output_dir 已经存在，不会报错（默认情况下，文件夹已存在会抛出 FileExistsError）
         output_dir.mkdir(parents=True, exist_ok=True)
-        do_parse(
+        global local_md_dir
+        local_md_dir = do_parse(
             output_dir=str(output_dir),
             pdf_file_names=[file_name],
             pdf_bytes_list=[pdf_bytes],
+            p_lang_list=["ch"],
             backend="vlm-transformers",  # vlm-transformers
             f_draw_layout_bbox=False,
             f_draw_span_bbox=False,
             f_dump_md=False,
             f_dump_content_list=True,
         )
+
         """
         backend: the backend for parsing pdf:
             pipeline: More general.
@@ -54,7 +60,7 @@ def parse_all_pdfs(datas_dir, output_base_dir):
         start_page_id: Start page ID for parsing, default is 0
         end_page_id: End page ID for parsing, default is None (parse all pages until the end of the document)
         """
-        print(f"已输出: {output_dir / 'auto' / (file_name + '_content_list.json')}")
+        print(f"已输出: {output_dir/ file_name / (file_name + '_content_list.json')}")
 
 
 def group_by_page(content_list):
@@ -85,15 +91,8 @@ def item_to_markdown(item, enable_image_caption=True):
     enable_image_caption: 是否启用多模态视觉分析(图片caption补全),默认True。
     """
     import os
-    import dotenv
-    import asyncio
-
-    dotenv.load_dotenv()
-    # 默认API参数：硅基流动Qwen/Qwen2.5-VL-7B-Instruct
-    vision_provider = "guiji"
-    vision_model = "Qwen/Qwen2.5-7B-Instruct"
-    vision_api_key = os.getenv("SILICONFLOW_API_KEY")
-    vision_base_url = os.getenv("LOCAL_BASE_URL")
+    from tryQwen2vl2b import AsyncImageAnalysis
+    import json
 
     if item["type"] == "text":
         level = item.get("text_level", 0)
@@ -110,7 +109,8 @@ def item_to_markdown(item, enable_image_caption=True):
         # 通常是对图片内容的文本描述（比如图片展示的是什么、包含哪些关键信息等）
         captions = item.get("image_caption", [])
         caption = captions[0] if captions else ""
-        img_path = item.get("img_path", "")
+        subdir_img_path = item.get("img_path", "")
+        img_path = os.path.join(local_md_dir, subdir_img_path)
         # 如果没有caption，且允许视觉分析，调用多模态API补全
         if (
             enable_image_caption
@@ -120,28 +120,36 @@ def item_to_markdown(item, enable_image_caption=True):
             and os.path.exists(img_path)
         ):
             try:
-                # 创建并设置一个新的异步事件循
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
 
-                async def get_caption():
-                    async with AsyncImageAnalysis(
-                        provider=vision_provider,
-                        api_key=vision_api_key,
-                        base_url=vision_base_url,
-                        vision_model=vision_model,
-                    ) as analyzer:
-                        result = await analyzer.analyze_image(local_image_path=img_path)
-                        return result.get("title") or result.get("description") or ""
+                def get_caption():
+                    """
+                    异步获取图片的描述信息
 
-                caption = loop.run_until_complete(get_caption())
-                loop.close()
+                    Returns:
+                        返回异步图片分析的结果，即图片的描述信息
+                    """
+                    return AsyncImageAnalysis(img_path)
+
+                # 运行异步函数 get_caption() 来获取图片的描述信息，并将结果赋值给 caption 变量
+                # run_until_complete() 会阻塞直到异步任务完成，适用于在同步代码中调用异步函数
+                caption = get_caption()
                 if caption:
-                    item["image_caption"] = [caption]
+                    b = json.loads(caption[0])
+                    item["image_caption"] = b["description"]
+                    item["image_title"] = b["title"]
             except Exception as e:
                 print(f"图片解释失败: {img_path}, {e}")
-        md = f"![{caption}]({img_path})\n"
-        return md + "\n"
+        # 生成一段包含图片和标题的 Markdown 格式文本
+        # 初始化空字符串
+        md_text = ""
+
+        # 拼接标题、图片、描述（用换行符 \n 分隔）
+        md_text += f"{item['image_title']}\n\n"  # 标题后空一行，与图片分隔
+        md_text += f"![{item['image_title']}]({img_path})\n\n"  # 图片后空一行，与描述分隔
+        md_text += f"{item['image_caption']}\n"
+
+# 此时 md_text 就是最终的文本字符串
+        return md_text
     elif item["type"] == "table":
         captions = item.get("table_caption", [])
         caption = captions[0] if captions else ""
@@ -171,17 +179,19 @@ def assemble_pages_to_markdown(pages):
 
 def process_all_pdfs_to_page_json(input_base_dir, output_base_dir):
     """
-    步骤2：将 content_list.json 转为 page_content.json
+    步骤2:将 content_list.json 转为 page_content.json
     """
+    import json
+
     input_base_dir = Path(input_base_dir)
     output_base_dir = Path(output_base_dir)
     pdf_dirs = [d for d in input_base_dir.iterdir() if d.is_dir()]
     for pdf_dir in pdf_dirs:
         file_name = pdf_dir.name
-        json_path = pdf_dir / "auto" / f"{file_name}_content_list.json"
+        json_path = pdf_dir / f"{file_name}_content_list.json"
         if not json_path.exists():
             sub_dir = pdf_dir / file_name
-            json_path2 = sub_dir / "auto" / f"{file_name}_content_list.json"
+            json_path2 = sub_dir / f"{file_name}_content_list.json"
             if json_path2.exists():
                 json_path = json_path2
             else:
@@ -203,6 +213,8 @@ def process_page_content_to_chunks(input_base_dir, output_json_path):
     """
     步骤3：将 page_content.json 合并为 all_pdf_page_chunks.json
     """
+    import json
+
     input_base_dir = Path(input_base_dir)
     all_chunks = []
     for pdf_dir in input_base_dir.iterdir():
@@ -232,20 +244,25 @@ def process_page_content_to_chunks(input_base_dir, output_json_path):
     print(f"已输出: {output_json_path}")
 
 
-def main():
-    base_dir = Path(__file__).parent
-    datas_dir = base_dir / "datas"
-    content_dir = base_dir / "data_base_json_content"
-    page_dir = base_dir / "data_base_json_page_content"
-    chunk_json_path = base_dir / "all_pdf_page_chunks.json"
+if __name__ == "__main__":
+    # base_dir = Path(__file__).parent
+    # datas_dir = base_dir
+    datas_dir = "./tryoutput"
+    output = Path("./output")
+    content_dir = output / "data_base_json_content"
+    page_dir = output / "data_base_json_page_content"
+    chunk_json_path = output / "all_pdf_page_chunks.json"
     # 步骤1：PDF → content_list.json
+    # if not content_dir.exists():
     parse_all_pdfs(datas_dir, content_dir)
     # 步骤2：content_list.json → page_content.json
-    process_all_pdfs_to_page_json(content_dir, page_dir)
-    # 步骤3：page_content.json → all_pdf_page_chunks.json
-    process_page_content_to_chunks(page_dir, chunk_json_path)
+    if not os.listdir(page_dir):
+        process_all_pdfs_to_page_json(content_dir, page_dir)
+        # 步骤3：page_content.json → all_pdf_page_chunks.json
+    else:
+        print(f"已存在: {page_dir}")
+    if not chunk_json_path.exists():
+        process_page_content_to_chunks(page_dir, chunk_json_path)
+    else:
+        print(f"已存在: {chunk_json_path}")
     print("全部处理完成！")
-
-
-if __name__ == "__main__":
-    main()
